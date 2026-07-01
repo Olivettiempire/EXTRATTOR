@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -7,18 +8,31 @@ from office.product import ProductSpec
 from office.virtual_office import VirtualOffice
 
 
-def fake_client(texts):
-    client = MagicMock()
-    client.messages.create.side_effect = [
-        SimpleNamespace(content=[SimpleNamespace(type="text", text=t)]) for t in texts
-    ]
-    return client
+def make_query_fn(texts):
+    """Crea una query_fn asincrona che restituisce, ad ogni chiamata, un
+    messaggio in stile ResultMessage (con attributo `result`) preso in
+    sequenza dalla lista `texts`. Emula claude_agent_sdk.query senza CLI."""
+    remaining = list(texts)
+
+    def query_fn(prompt, system_prompt, model):
+        text = remaining.pop(0)
+
+        async def _gen():
+            yield SimpleNamespace(result=text)
+
+        return _gen()
+
+    return query_fn
 
 
 class BaseAgentTests(unittest.TestCase):
     def test_respond_parses_lezione_and_updates_memory(self):
-        client = fake_client(["Contenuto della risposta.\nLEZIONE: essere piu' concisi"])
-        agent = BaseAgent(name="Test", role="Tester", system_prompt="Sei un tester.", client=client)
+        agent = BaseAgent(
+            name="Test",
+            role="Tester",
+            system_prompt="Sei un tester.",
+            query_fn=make_query_fn(["Contenuto della risposta.\nLEZIONE: essere piu' concisi"]),
+        )
 
         reply = agent.respond("prompt")
 
@@ -26,8 +40,19 @@ class BaseAgentTests(unittest.TestCase):
         self.assertEqual(agent.memory.experience, 1)
         self.assertEqual(agent.memory.learnings, ["essere piu' concisi"])
 
+    def test_respond_falls_back_to_assistant_text_blocks(self):
+        # Nessun ResultMessage: solo blocchi di testo dell'assistente.
+        def query_fn(prompt, system_prompt, model):
+            async def _gen():
+                yield SimpleNamespace(content=[SimpleNamespace(text="Ciao "), SimpleNamespace(text="mondo")])
+
+            return _gen()
+
+        agent = BaseAgent(name="T", role="R", system_prompt="x", query_fn=query_fn)
+        self.assertEqual(agent.respond("p"), "Ciao mondo")
+
     def test_memory_keeps_only_recent_learnings(self):
-        memory_agent = BaseAgent(name="Test", role="Tester", system_prompt="x", client=MagicMock())
+        memory_agent = BaseAgent(name="Test", role="Tester", system_prompt="x", query_fn=make_query_fn([]))
         for i in range(12):
             memory_agent.memory.add(f"nota-{i}")
         self.assertEqual(len(memory_agent.memory.learnings), 8)
@@ -64,8 +89,7 @@ class VirtualOfficeTests(unittest.TestCase):
                 ' "differentiators": ["d1"], "main_risks": ["r1"]}\nLEZIONE: nota-coordinator'
             ),
         ]
-        client = fake_client(texts)
-        office = VirtualOffice(client=client, viability_threshold=90.0, max_rounds=3)
+        office = VirtualOffice(query_fn=make_query_fn(texts), viability_threshold=90.0, max_rounds=3)
 
         session = office.run("Un'app per la gestione fiscale delle PMI")
 
@@ -82,8 +106,7 @@ class VirtualOfficeTests(unittest.TestCase):
             "Critica.\nPUNTEGGIO: 40\nLEZIONE: n4",
             '{"name": "Prodotto Beta"}\nLEZIONE: n5',
         ]
-        client = fake_client(texts)
-        office = VirtualOffice(client=client, viability_threshold=90.0, max_rounds=1)
+        office = VirtualOffice(query_fn=make_query_fn(texts), viability_threshold=90.0, max_rounds=1)
         session = office.run("idea di test")
 
         import tempfile

@@ -4,6 +4,10 @@ Un piccolo team di agenti Claude che collaborano come in un ufficio
 virtuale per definire, criticare e raffinare un prodotto digitale
 partendo da un'idea di base.
 
+Gli agenti usano il **Claude Agent SDK**, che si autentica tramite la CLI
+di Claude Code e il tuo **abbonamento Pro/Max** — **nessuna API key** e
+nessun costo a token.
+
 ## Come funziona
 
 Ogni "ciclo di lavoro" coinvolge cinque agenti specializzati, in
@@ -40,13 +44,26 @@ qualita' e la probabilita' di successo della proposta, in modo
 onesto e verificabile (il punteggio di viabilita' e' una stima
 euristica prodotta dagli agenti stessi, non una certezza).
 
+## Prerequisiti (uso con abbonamento, senza API key)
+
+1. Installa la CLI di Claude Code:
+   ```bash
+   npm install -g @anthropic-ai/claude-code
+   ```
+2. Effettua il login con il tuo account (abbonamento Pro/Max):
+   ```bash
+   claude login
+   ```
+   L'autenticazione avviene via browser; il Claude Agent SDK riusa
+   automaticamente questa sessione, quindi **non serve** impostare
+   `ANTHROPIC_API_KEY`.
+
 ## Setup
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env  # inserisci la tua ANTHROPIC_API_KEY
 ```
 
 ## Uso
@@ -61,8 +78,8 @@ Opzioni principali:
 - `--rounds`: numero massimo di cicli di collaborazione (default 3).
 - `--threshold`: punteggio di viabilita' che interrompe i cicli in
   anticipo (default 90).
-- `--model`: modello Claude usato dagli agenti (default
-  `claude-sonnet-5`).
+- `--model`: modello Claude usato dagli agenti (default `sonnet`; es.
+  `opus`).
 - `--output-dir`: cartella dove salvare il report (default `outputs/`).
 
 Il report viene salvato in `outputs/office-session-<timestamp>.md`.
@@ -70,21 +87,20 @@ Il report viene salvato in `outputs/office-session-<timestamp>.md`.
 ## Test
 
 ```bash
-pip install -r requirements.txt
 python -m unittest discover -s tests
 ```
 
-I test usano un client Anthropic simulato (mock), quindi non serve una
-chiave API valida per eseguirli.
+I test iniettano una `query_fn` simulata al posto del Claude Agent SDK,
+quindi **non** serve la CLI installata ne' il login per eseguirli.
 
 ## Struttura del progetto
 
 ```
 office/
-  agent.py           # Classe base degli agenti (memoria, chiamata al modello)
+  agent.py           # Classe base degli agenti (memoria, chiamata via Agent SDK)
   product.py          # Scheda di prodotto e sua serializzazione
   roles.py             # Definizione dei ruoli specializzati
   virtual_office.py    # Orchestratore dei cicli di collaborazione
 main.py                # Entry point da riga di comando
-tests/                  # Test unitari con client Anthropic simulato
+tests/                  # Test unitari con query_fn simulata
 ```

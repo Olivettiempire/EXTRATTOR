@@ -3,14 +3,15 @@ from __future__ import annotations
 
 from typing import Optional
 
-from anthropic import Anthropic
-
-from .agent import BaseAgent
+from .agent import BaseAgent, QueryFn
 
 
-def build_office_agents(client: Optional[Anthropic] = None, model: str = "claude-sonnet-5") -> dict:
+def build_office_agents(query_fn: Optional[QueryFn] = None, model: Optional[str] = "sonnet") -> dict:
     """Crea il team di agenti specializzati. Ogni ruolo ha un focus
-    diverso cosi' da produrre critiche e contributi complementari."""
+    diverso cosi' da produrre critiche e contributi complementari.
+
+    `query_fn` e' iniettabile per i test; se None gli agenti usano il
+    Claude Agent SDK (abbonamento Pro/Max, nessuna API key)."""
 
     strategist = BaseAgent(
         name="Marco",
@@ -22,7 +23,7 @@ def build_office_agents(client: Optional[Anthropic] = None, model: str = "claude
             "e sulle critiche ricevute dal resto del team."
         ),
         model=model,
-        client=client,
+        query_fn=query_fn,
     )
 
     engineer = BaseAgent(
@@ -34,7 +35,7 @@ def build_office_agents(client: Optional[Anthropic] = None, model: str = "claude
             "segnali rischi tecnici o di complessita'."
         ),
         model=model,
-        client=client,
+        query_fn=query_fn,
     )
 
     marketer = BaseAgent(
@@ -46,7 +47,7 @@ def build_office_agents(client: Optional[Anthropic] = None, model: str = "claude
             "di posizionamento efficaci per il target indicato."
         ),
         model=model,
-        client=client,
+        query_fn=query_fn,
     )
 
     optimizer = BaseAgent(
@@ -62,7 +63,7 @@ def build_office_agents(client: Optional[Anthropic] = None, model: str = "claude
             "formato 'PUNTEGGIO: <numero da 0 a 100>'."
         ),
         model=model,
-        client=client,
+        query_fn=query_fn,
     )
 
     coordinator = BaseAgent(
@@ -77,7 +78,7 @@ def build_office_agents(client: Optional[Anthropic] = None, model: str = "claude
             "revenue_strategy, differentiators (lista), main_risks (lista)."
         ),
         model=model,
-        client=client,
+        query_fn=query_fn,
     )
 
     return {

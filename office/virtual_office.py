@@ -10,9 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from anthropic import Anthropic
-
-from .agent import BaseAgent
+from .agent import BaseAgent, QueryFn
 from .product import ProductSpec
 from .roles import build_office_agents
 
@@ -46,12 +44,12 @@ class VirtualOffice:
 
     def __init__(
         self,
-        client: Optional[Anthropic] = None,
-        model: str = "claude-sonnet-5",
+        query_fn: Optional[QueryFn] = None,
+        model: Optional[str] = "sonnet",
         viability_threshold: float = 90.0,
         max_rounds: int = 3,
     ):
-        self.agents = build_office_agents(client=client, model=model)
+        self.agents = build_office_agents(query_fn=query_fn, model=model)
         self.viability_threshold = viability_threshold
         self.max_rounds = max_rounds
 

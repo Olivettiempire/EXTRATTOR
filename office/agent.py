@@ -1,17 +1,63 @@
 """Agenti dell'ufficio virtuale: ogni agente e' un ruolo specializzato
-che ragiona tramite un modello Claude e accumula esperienza/apprendimenti
-tra un ciclo di lavoro e l'altro."""
+che ragiona tramite Claude e accumula esperienza/apprendimenti tra un
+ciclo di lavoro e l'altro.
+
+Gli agenti NON usano una API key: si appoggiano al Claude Agent SDK, che
+comunica con la CLI di Claude Code autenticata tramite l'abbonamento
+Pro/Max. Vedi README per i prerequisiti."""
 from __future__ import annotations
 
-import os
+import asyncio
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional
-
-from anthropic import Anthropic
+from typing import Any, AsyncIterator, Callable, List, Optional
 
 LEARNING_PATTERN = re.compile(r"^\s*LEZIONE:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 MAX_LEARNINGS = 8
+
+# Una funzione che, dati prompt/system_prompt/model, restituisce un
+# iteratore asincrono di messaggi (come quello prodotto da
+# claude_agent_sdk.query). Iniettabile per rendere gli agenti testabili
+# senza dipendere dalla CLI di Claude Code.
+QueryFn = Callable[[str, str, Optional[str]], AsyncIterator[Any]]
+
+
+def _sdk_query(prompt: str, system_prompt: str, model: Optional[str]) -> AsyncIterator[Any]:
+    """Backend di default: usa il Claude Agent SDK (abbonamento Pro/Max,
+    nessuna API key). L'import e' lazy cosi' i test non richiedono il
+    pacchetto ne' la CLI installata."""
+    from claude_agent_sdk import ClaudeAgentOptions, query
+
+    options = ClaudeAgentOptions(
+        system_prompt=system_prompt,
+        model=model,
+        allowed_tools=[],  # nessuno strumento: vogliamo solo una risposta testuale
+        max_turns=1,
+    )
+    return query(prompt=prompt, options=options)
+
+
+async def _collect_text(message_iter: AsyncIterator[Any]) -> str:
+    """Estrae il testo finale dal flusso di messaggi dell'SDK.
+
+    Preferisce il campo `result` del ResultMessage; in mancanza ricade
+    sull'accumulo dei blocchi di testo dei messaggi dell'assistente. Usa
+    duck-typing per non dipendere dai tipi interni dell'SDK."""
+    final_result: Optional[str] = None
+    assistant_text: List[str] = []
+    async for message in message_iter:
+        result = getattr(message, "result", None)
+        if isinstance(result, str):
+            final_result = result
+        content = getattr(message, "content", None)
+        if isinstance(content, list):
+            for block in content:
+                text = getattr(block, "text", None)
+                if isinstance(text, str):
+                    assistant_text.append(text)
+    if final_result is not None:
+        return final_result
+    return "".join(assistant_text)
 
 
 @dataclass
@@ -38,21 +84,15 @@ class BaseAgent:
         name: str,
         role: str,
         system_prompt: str,
-        model: str = "claude-sonnet-5",
-        client: Optional[Anthropic] = None,
+        model: Optional[str] = "sonnet",
+        query_fn: Optional[QueryFn] = None,
     ):
         self.name = name
         self.role = role
         self.system_prompt = system_prompt
         self.model = model
         self.memory = AgentMemory()
-        self._client = client
-
-    @property
-    def client(self) -> Anthropic:
-        if self._client is None:
-            self._client = Anthropic()
-        return self._client
+        self.query_fn = query_fn or _sdk_query
 
     def _build_system_prompt(self) -> str:
         if self.memory.learnings:
@@ -69,18 +109,15 @@ class BaseAgent:
             "'LEZIONE: <cosa migliorare nel prossimo ciclo>'."
         )
 
-    def respond(self, prompt: str, max_tokens: int = 1024) -> str:
-        message = self.client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            system=self._build_system_prompt(),
-            messages=[{"role": "user", "content": prompt}],
-        )
-        text = "".join(
-            block.text for block in message.content if getattr(block, "type", None) == "text"
-        )
+    async def respond_async(self, prompt: str) -> str:
+        message_iter = self.query_fn(prompt, self._build_system_prompt(), self.model)
+        text = await _collect_text(message_iter)
         self.memory.experience += 1
         learning_match = LEARNING_PATTERN.search(text)
         if learning_match:
             self.memory.add(learning_match.group(1))
         return text
+
+    def respond(self, prompt: str) -> str:
+        """Wrapper sincrono attorno a respond_async, comodo per la CLI."""
+        return asyncio.run(self.respond_async(prompt))
