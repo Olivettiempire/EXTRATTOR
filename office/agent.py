@@ -32,7 +32,12 @@ def _sdk_query(prompt: str, system_prompt: str, model: Optional[str]) -> AsyncIt
         system_prompt=system_prompt,
         model=model,
         allowed_tools=[],  # nessuno strumento: vogliamo solo una risposta testuale
-        max_turns=1,
+        # Diamo margine sul numero di turni: senza strumenti l'agente
+        # risponde comunque in un turno, ma con prompt molto lunghi la CLI
+        # puo' contare un turno extra. Con max_turns=1 questo faceva
+        # fallire il run ("Reached maximum number of turns"); l'headroom
+        # e' sicuro perche' non essendoci strumenti non ci sono loop.
+        max_turns=8,
     )
     return query(prompt=prompt, options=options)
 
