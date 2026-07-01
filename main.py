@@ -19,10 +19,15 @@ def main() -> int:
     parser.add_argument("--threshold", type=float, default=90.0, help="Punteggio di viabilita' che interrompe i cicli in anticipo.")
     parser.add_argument("--model", default="sonnet", help="Modello Claude usato dagli agenti (es. sonnet, opus).")
     parser.add_argument("--output-dir", default="outputs", help="Cartella dove salvare il report finale.")
+    parser.add_argument("--quiet", action="store_true", help="Non stampare i contributi degli agenti man mano che arrivano.")
     args = parser.parse_args()
 
+    def progress(round_number, role_key, agent, text):
+        print(f"\n{'='*70}\n[Ciclo {round_number}] {agent.name} - {agent.role}\n{'='*70}")
+        print(text.strip())
+
     office = VirtualOffice(model=args.model, viability_threshold=args.threshold, max_rounds=args.rounds)
-    session = office.run(args.topic)
+    session = office.run(args.topic, progress_callback=None if args.quiet else progress)
     report_path = office.write_report(session, output_dir=args.output_dir)
 
     print(f"Report salvato in: {report_path}")

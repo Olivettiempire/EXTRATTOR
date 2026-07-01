@@ -98,6 +98,24 @@ class VirtualOfficeTests(unittest.TestCase):
         self.assertEqual(session.product.version, 1)
         self.assertEqual(session.product.viability_score, 95.0)
 
+    def test_progress_callback_invoked_for_each_role(self):
+        texts = [
+            "Proposta.\nLEZIONE: n1",
+            "Analisi.\nLEZIONE: n2",
+            "Piano.\nLEZIONE: n3",
+            "Critica.\nPUNTEGGIO: 95\nLEZIONE: n4",
+            '{"name": "Prodotto Test"}\nLEZIONE: n5',
+        ]
+        office = VirtualOffice(query_fn=make_query_fn(texts), viability_threshold=90.0, max_rounds=1)
+
+        seen = []
+        office.run("idea", progress_callback=lambda rnd, role, agent, text: seen.append((rnd, role)))
+
+        self.assertEqual(
+            seen,
+            [(1, "strategist"), (1, "engineer"), (1, "marketer"), (1, "optimizer"), (1, "coordinator")],
+        )
+
     def test_write_report_creates_markdown_file(self):
         texts = [
             "Proposta.\nLEZIONE: n1",

@@ -3,16 +3,22 @@ cicli successivi finche' il prodotto non raggiunge una soglia di
 viabilita' accettabile oppure si esauriscono i cicli disponibili."""
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from .agent import BaseAgent, QueryFn
 from .product import ProductSpec
 from .roles import build_office_agents
+
+# Callback invocata appena un agente completa il suo contributo, cosi' la
+# CLI puo' mostrare l'avanzamento in tempo reale invece di attendere la
+# fine del round. Firma: (round_number, role_key, agent, text).
+ProgressCallback = Callable[[int, str, BaseAgent, str], None]
 
 SCORE_PATTERN = re.compile(r"PUNTEGGIO:\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
 JSON_BLOCK_PATTERN = re.compile(r"\{.*\}", re.DOTALL)
@@ -53,11 +59,17 @@ class VirtualOffice:
         self.viability_threshold = viability_threshold
         self.max_rounds = max_rounds
 
-    def run(self, topic: str) -> OfficeSession:
+    def run(self, topic: str, progress_callback: Optional[ProgressCallback] = None) -> OfficeSession:
+        """Wrapper sincrono attorno a run_async, comodo per la CLI."""
+        return asyncio.run(self.run_async(topic, progress_callback))
+
+    async def run_async(
+        self, topic: str, progress_callback: Optional[ProgressCallback] = None
+    ) -> OfficeSession:
         session = OfficeSession(topic=topic)
 
         for round_number in range(1, self.max_rounds + 1):
-            contributions = self._run_round(session, round_number)
+            contributions = await self._run_round(session, round_number, progress_callback)
             score = self._extract_score(contributions["optimizer"])
             session.product.viability_score = score
             session.rounds.append(
@@ -68,48 +80,65 @@ class VirtualOffice:
 
         return session
 
-    def _run_round(self, session: OfficeSession, round_number: int) -> dict:
+    async def _run_round(
+        self,
+        session: OfficeSession,
+        round_number: int,
+        progress_callback: Optional[ProgressCallback],
+    ) -> dict:
         context = self._describe_context(session, round_number)
+        contributions: dict = {}
 
-        strategist_reply = self.agents["strategist"].respond(
+        def emit(role_key: str, reply: str) -> None:
+            contributions[role_key] = reply
+            if progress_callback:
+                progress_callback(round_number, role_key, self.agents[role_key], reply)
+
+        strategist_reply = await self.agents["strategist"].respond_async(
             f"{context}\n\nProponi o affina la value proposition, il target di mercato e "
             "le funzionalita' chiave del prodotto."
         )
-        engineer_reply = self.agents["engineer"].respond(
-            f"{context}\n\nContributo dello strategist:\n{strategist_reply}\n\n"
-            "Valuta la fattibilita' tecnica e proponi uno scope MVP realistico."
+        emit("strategist", strategist_reply)
+
+        # Ingegnere e marketer partono entrambi dal contributo dello
+        # strategist e non dipendono l'uno dall'altro: li eseguiamo in
+        # parallelo per ridurre la latenza del round.
+        engineer_reply, marketer_reply = await asyncio.gather(
+            self.agents["engineer"].respond_async(
+                f"{context}\n\nContributo dello strategist:\n{strategist_reply}\n\n"
+                "Valuta la fattibilita' tecnica e proponi uno scope MVP realistico."
+            ),
+            self.agents["marketer"].respond_async(
+                f"{context}\n\nContributo dello strategist:\n{strategist_reply}\n\n"
+                "Proponi pricing, canali di acquisizione e posizionamento di marketing."
+            ),
         )
-        marketer_reply = self.agents["marketer"].respond(
-            f"{context}\n\nContributo dello strategist:\n{strategist_reply}\n\n"
-            f"Contributo dell'ingegnere:\n{engineer_reply}\n\n"
-            "Proponi pricing, canali di acquisizione e posizionamento di marketing."
-        )
-        optimizer_reply = self.agents["optimizer"].respond(
+        emit("engineer", engineer_reply)
+        emit("marketer", marketer_reply)
+
+        optimizer_reply = await self.agents["optimizer"].respond_async(
             f"{context}\n\nContributo dello strategist:\n{strategist_reply}\n\n"
             f"Contributo dell'ingegnere:\n{engineer_reply}\n\n"
             f"Contributo del marketer:\n{marketer_reply}\n\n"
             "Critica il lavoro del team, individua rischi e stima onestamente il "
             "punteggio di viabilita' commerciale."
         )
-        coordinator_reply = self.agents["coordinator"].respond(
+        emit("optimizer", optimizer_reply)
+
+        coordinator_reply = await self.agents["coordinator"].respond_async(
             f"{context}\n\nContributo dello strategist:\n{strategist_reply}\n\n"
             f"Contributo dell'ingegnere:\n{engineer_reply}\n\n"
             f"Contributo del marketer:\n{marketer_reply}\n\n"
             f"Critica dell'optimizer:\n{optimizer_reply}\n\n"
             "Sintetizza tutto in un aggiornamento della scheda di prodotto in formato JSON."
         )
+        emit("coordinator", coordinator_reply)
 
         update = self._parse_json(coordinator_reply)
         if update:
             session.product.apply_update(update)
 
-        return {
-            "strategist": strategist_reply,
-            "engineer": engineer_reply,
-            "marketer": marketer_reply,
-            "optimizer": optimizer_reply,
-            "coordinator": coordinator_reply,
-        }
+        return contributions
 
     def _describe_context(self, session: OfficeSession, round_number: int) -> str:
         return (

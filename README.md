@@ -24,11 +24,19 @@ sequenza:
 5. **Alessia - Coordinatrice**: sintetizza tutti i contributi in un
    aggiornamento strutturato della scheda di prodotto.
 
+Ingegnere e marketer partono entrambi dal contributo dello strategist e
+non dipendono l'uno dall'altro, quindi vengono eseguiti **in parallelo**
+(asyncio) per ridurre la latenza del round.
+
 I cicli si ripetono finche' il punteggio di viabilita' supera la
 soglia scelta (default 90/100) oppure si raggiunge il numero massimo
 di cicli. Ogni agente accumula "lezioni apprese" dai cicli precedenti
 (estratte da una riga `LEZIONE:` nella propria risposta) e le usa per
 specializzarsi e migliorare i contributi successivi.
+
+Durante l'esecuzione, ogni contributo viene stampato a schermo appena
+l'agente lo completa (avanzamento live). Usa `--quiet` per disattivare
+questa stampa.
 
 Alla fine viene generato un report Markdown con la scheda di prodotto
 finale e la cronologia completa della discussione tra gli agenti.
@@ -81,6 +89,7 @@ Opzioni principali:
 - `--model`: modello Claude usato dagli agenti (default `sonnet`; es.
   `opus`).
 - `--output-dir`: cartella dove salvare il report (default `outputs/`).
+- `--quiet`: non stampare i contributi degli agenti man mano che arrivano.
 
 Il report viene salvato in `outputs/office-session-<timestamp>.md`.
 
